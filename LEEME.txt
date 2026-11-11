@@ -1,0 +1,20 @@
+CRONICAS - Juego de rol y simulacion con IA local
+=================================================
+
+INSTALACION (solo la primera vez)
+1. Instala Python 3.9 o superior: https://www.python.org/downloads/
+   (marca la casilla "Add Python to PATH" durante la instalacion)
+2. Instala Ollama para Windows: https://ollama.com/download/windows
+3. Descarga un modelo abriendo una terminal (cmd) y ejecutando, por ejemplo:
+      ollama pull qwen2.5:14b
+   Puedes usar otro modelo mas grande o mas pequeno segun tu equipo.
+
+USO
+- Haz doble clic en iniciar.bat. Se abrira el navegador en http://localhost:8000
+- Las partidas se guardan en el archivo partidas.db (copialo para hacer copia de seguridad).
+- Para cerrar el juego, cierra la ventana negra del servidor.
+
+ARCHIVOS
+- server.py   servidor local (conexion con Ollama, base de datos, fichas)
+- index.html  interfaz del juego
+- iniciar.bat lanzador para Windows

@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crónicas — juego de rol y simulación</title>
+<style>
+:root{
+  --ink:#12161c; --panel:#1a202a; --panel2:#222a36; --line:#2f3947;
+  --text:#e6e2d6; --muted:#9aa3ad; --player:#6fbfae; --director:#e0a93f; --danger:#d9695f;
+  --narr:Georgia,"Iowan Old Style","Palatino Linotype",serif;
+  --ui:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--ink);color:var(--text);font:15px/1.5 var(--ui)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 14px;cursor:pointer}
+button:hover{border-color:var(--muted)}
+button.primary{background:var(--player);color:#0d1a17;border-color:var(--player);font-weight:600}
+button.danger{color:var(--danger)}
+:focus-visible{outline:2px solid var(--player);outline-offset:2px}
+input,select,textarea{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:9px 11px}
+textarea{resize:vertical;min-height:90px}
+label{display:block;margin:14px 0 5px;color:var(--muted);font-size:13px}
+.hidden{display:none!important}
+
+/* menú */
+#menu{max-width:760px;margin:0 auto;padding:48px 20px}
+#menu h1{font:700 40px/1.1 var(--narr);margin:0 0 6px}
+#menu .sub{color:var(--muted);margin:0 0 32px}
+.game{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-bottom:10px}
+.game .info{flex:1;cursor:pointer}
+.game .info b{font:600 18px var(--narr)}
+.game .info small{display:block;color:var(--muted)}
+.empty{color:var(--muted);padding:18px;border:1px dashed var(--line);border-radius:8px}
+#newform{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 18px 18px;margin-top:18px}
+.row{display:flex;gap:10px;margin-top:16px}
+
+/* partida */
+#game{display:flex;flex-direction:column;height:100%}
+header.bar{display:flex;align-items:center;gap:6px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+header.bar .title{font:600 18px var(--narr);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tab{border:0;background:none;border-radius:0;padding:8px 12px;color:var(--muted);border-bottom:2px solid transparent}
+.tab.on{color:var(--text);border-bottom-color:var(--player)}
+.tab:disabled{opacity:.4;cursor:not-allowed}
+main{flex:1;min-height:0;display:flex;flex-direction:column}
+
+/* chat */
+#log{flex:1;overflow-y:auto;padding:24px 16px}
+.wrap{max-width:720px;margin:0 auto}
+.msg{margin-bottom:22px;white-space:pre-wrap;overflow-wrap:anywhere}
+.msg.narrator{font:18px/1.7 var(--narr)}
+.msg.player{border-left:3px solid var(--player);padding-left:12px;color:#cfe9e3}
+.msg.director{border-left:3px solid var(--director);padding-left:12px;color:#f0d9a6;font-style:italic}
+.msg .who{display:block;font-size:12px;color:var(--muted);font-style:normal;font-family:var(--ui);margin-bottom:2px}
+.status{color:var(--muted);font-size:13px;margin:-10px 0 18px}
+#composer{border-top:1px solid var(--line);background:var(--panel);padding:12px 16px}
+#composer textarea{min-height:60px;max-height:200px}
+.modes{display:flex;gap:6px;margin-bottom:8px;align-items:center}
+.mode{padding:5px 11px;font-size:13px}
+.mode.on[data-m=player]{background:var(--player);color:#0d1a17;border-color:var(--player)}
+.mode.on[data-m=director]{background:var(--director);color:#1f1606;border-color:var(--director)}
+.hint{color:var(--muted);font-size:12px;flex:1;text-align:right}
+
+/* fichas */
+#sheets{flex:1;overflow-y:auto;padding:20px 16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin:14px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;cursor:pointer}
+.card:hover{border-color:var(--muted)}
+.card b{font:600 18px var(--narr);display:block}
+.card .rol{color:var(--director);font-size:13px}
+.card p{margin:6px 0 0;color:var(--muted);font-size:13px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.card.flash{border-color:var(--player)}
+#edit{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 18px 18px}
+.map-soon{padding:60px 20px;text-align:center;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<section id="menu">
+  <h1>Crónicas</h1>
+  <p class="sub">Tu mundo, tus reglas. La IA se ejecuta en tu equipo, sin créditos ni límites.</p>
+  <div class="row" style="margin:0 0 16px"><button class="primary" id="btnNew">Crear partida</button></div>
+  <div id="games"></div>
+
+  <form id="newform" class="hidden">
+    <label for="gName">Nombre de la partida</label>
+    <input id="gName" required>
+    <label for="gSetup">¿Quién eres y en qué mundo empieza la historia?</label>
+    <textarea id="gSetup" required placeholder="Soy Aren, una cartógrafa expulsada de la Academia. El mundo es un archipiélago de islas flotantes donde la magia se paga con recuerdos…"></textarea>
+    <label for="gRules">Reglas de la partida (opcional)</label>
+    <textarea id="gRules" placeholder="Tono oscuro y realista. La magia tiene siempre un coste. Los personajes pueden morir."></textarea>
+    <label for="gModel">Modelo de IA local</label>
+    <select id="gModel"></select>
+    <div id="modelErr" class="hidden" style="color:var(--danger);margin-top:8px"></div>
+    <div class="row">
+      <button class="primary" type="submit">Empezar partida</button>
+      <button type="button" id="btnCancel">Cancelar</button>
+    </div>
+  </form>
+</section>
+
+<section id="game" class="hidden">
+  <header class="bar">
+    <button id="btnBack">Menú</button>
+    <span class="title" id="gTitle"></span>
+    <button class="tab on" data-tab="chat">Chat</button>
+    <button class="tab" data-tab="sheets">Fichas</button>
+    <button class="tab" data-tab="map" disabled title="Próximamente">Mapa</button>
+  </header>
+  <main>
+    <div id="chat" style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div id="log"><div class="wrap" id="logInner"></div></div>
+      <div id="composer"><div class="wrap">
+        <div class="modes">
+          <button class="mode on" data-m="player">Actuar</button>
+          <button class="mode" data-m="director">Dirigir</button>
+          <span class="hint" id="hint"></span>
+        </div>
+        <textarea id="input"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="primary" id="btnSend">Enviar</button>
+          <button id="btnUndo">Deshacer último turno</button>
+        </div>
+      </div></div>
+    </div>
+    <div id="sheets" class="hidden"><div class="wrap">
+      <div class="row" style="margin:0"><button id="btnNewChar">Nuevo personaje</button></div>
+      <div class="cards" id="cards"></div>
+      <form id="edit" class="hidden"></form>
+    </div></div>
+  </main>
+</section>
+
+<script>
+const $ = s => document.querySelector(s);
+const FIELDS = [["rol","Rol"],["edad","Edad"],["aspecto","Aspecto"],["personalidad","Personalidad"],["historia","Historia"],["relaciones","Relaciones"],["estado","Estado actual"],["notas","Notas"]];
+let gid = null, chars = [], mode = "player", busy = false;
+
+async function api(method, path, body){
+  const r = await fetch("/api" + path, {method, headers: {"Content-Type":"application/json"}, body: body ? JSON.stringify(body) : undefined});
+  return r.json();
+}
+const show = id => { ["menu","game"].forEach(x => $("#"+x).classList.toggle("hidden", x !== id)); };
+
+/* ---------- Menú ---------- */
+async function loadGames(){
+  const list = await api("GET", "/games");
+  const box = $("#games"); box.innerHTML = "";
+  if(!list.length){ box.innerHTML = '<div class="empty">Todavía no hay partidas. Crea la primera para empezar.</div>'; return; }
+  list.forEach(g => {
+    const d = document.createElement("div"); d.className = "game";
+    d.innerHTML = '<div class="info"><b></b><small></small></div><button class="danger">Borrar</button>';
+    d.querySelector("b").textContent = g.name;
+    d.querySelector("small").textContent = g.model + " · " + new Date(g.created*1000).toLocaleDateString("es-ES");
+    d.querySelector(".info").onclick = () => openGame(g.id);
+    d.querySelector("button").onclick = async () => {
+      if(confirm(`¿Borrar la partida «${g.name}» y todas sus fichas?`)){ await api("DELETE", "/games/"+g.id); loadGames(); }
+    };
+    box.appendChild(d);
+  });
+}
+$("#btnNew").onclick = async () => {
+  $("#newform").classList.remove("hidden");
+  const r = await api("GET", "/models"), sel = $("#gModel"); sel.innerHTML = "";
+  (r.models||[]).forEach(m => sel.add(new Option(m, m)));
+  $("#modelErr").classList.toggle("hidden", !!(r.models||[]).length);
+  $("#modelErr").textContent = "No hay modelos disponibles. Instala Ollama y ejecuta, por ejemplo: ollama pull qwen2.5:14b";
+};
+$("#btnCancel").onclick = () => $("#newform").classList.add("hidden");
+$("#newform").onsubmit = async e => {
+  e.preventDefault();
+  if(!$("#gModel").value){ $("#modelErr").classList.remove("hidden"); return; }
+  const r = await api("POST", "/games", {name:$("#gName").value, setup:$("#gSetup").value, rules:$("#gRules").value, model:$("#gModel").value});
+  e.target.reset(); e.target.classList.add("hidden");
+  await openGame(r.id, true);
+};
+
+/* ---------- Partida ---------- */
+async function openGame(id, fresh){
+  gid = id;
+  const d = await api("GET", "/games/"+id);
+  $("#gTitle").textContent = d.game.name;
+  chars = d.characters;
+  $("#logInner").innerHTML = "";
+  d.messages.forEach(m => addMsg(m.kind, m.content));
+  show("game"); setTab("chat"); setMode("player"); renderCards();
+  if(fresh || !d.messages.length) send("start", "");
+  else scrollDown();
+}
+function addMsg(kind, text){
+  const el = document.createElement("div"); el.className = "msg " + kind;
+  if(kind !== "narrator"){
+    const w = document.createElement("span"); w.className = "who"; w.textContent = kind === "player" ? "Tú" : "Director"; el.appendChild(w);
+  }
+  const t = document.createElement("span"); t.textContent = text; el.appendChild(t);
+  $("#logInner").appendChild(el); return t;
+}
+const scrollDown = () => { const l = $("#log"); l.scrollTop = l.scrollHeight; };
+
+function setMode(m){
+  mode = m;
+  document.querySelectorAll(".mode").forEach(b => b.classList.toggle("on", b.dataset.m === m));
+  $("#hint").textContent = m === "player" ? "Escribe lo que dice o hace tu personaje" : "Cambia el mundo, corrige algo o crea un personaje";
+  $("#input").placeholder = m === "player" ? "Me acerco a la guardia y le digo que vengo de parte del gremio…" : "Haz que el posadero sea más joven y que se llame Teo. Añade una rival con el pelo plateado…";
+}
+document.querySelectorAll(".mode").forEach(b => b.onclick = () => setMode(b.dataset.m));
+
+async function send(kind, text){
+  if(busy) return; busy = true; $("#btnSend").disabled = true;
+  if(kind !== "start") addMsg(kind, text);
+  const out = addMsg("narrator", ""); scrollDown();
+  const st = document.createElement("div"); st.className = "status"; $("#logInner").appendChild(st);
+  try{
+    const r = await fetch(`/api/games/${gid}/turn`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({kind, text})});
+    const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
+    for(;;){
+      const {done, value} = await rd.read(); if(done) break;
+      buf += dec.decode(value, {stream:true});
+      let i; while((i = buf.indexOf("\n")) >= 0){
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i+1); if(!line) continue;
+        const ev = JSON.parse(line);
+        if(ev.t === "token"){ out.textContent += ev.v; scrollDown(); }
+        else if(ev.t === "status") st.textContent = ev.v;
+        else if(ev.t === "error") st.textContent = ev.v;
+        else if(ev.t === "chars" && ev.v.length) st.textContent = "Fichas actualizadas: " + ev.v.join(", ");
+        else if(ev.t === "done" && !st.textContent.startsWith("Fichas")) st.remove();
+      }
+    }
+  }catch(e){ st.textContent = "Se perdió la conexión con el servidor."; }
+  chars = (await api("GET", "/games/"+gid)).characters; renderCards();
+  busy = false; $("#btnSend").disabled = false; $("#input").focus();
+}
+function submit(){
+  const t = $("#input").value.trim(); if(!t) return;
+  $("#input").value = ""; send(mode, t);
+}
+$("#btnSend").onclick = submit;
+$("#input").addEventListener("keydown", e => { if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); submit(); } });
+$("#btnUndo").onclick = async () => {
+  if(busy) return;
+  await api("POST", `/games/${gid}/undo`, {}); openGame(gid);
+};
+$("#btnBack").onclick = () => { show("menu"); loadGames(); };
+
+/* ---------- Pestañas ---------- */
+function setTab(t){
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  $("#chat").style.display = t === "chat" ? "flex" : "none";
+  $("#sheets").classList.toggle("hidden", t !== "sheets");
+  if(t === "chat") scrollDown();
+}
+document.querySelectorAll(".tab").forEach(b => b.onclick = () => !b.disabled && setTab(b.dataset.tab));
+
+/* ---------- Fichas ---------- */
+function renderCards(){
+  const box = $("#cards"); box.innerHTML = "";
+  if(!chars.length){ box.innerHTML = '<div class="empty" style="grid-column:1/-1">Las fichas aparecerán aquí a medida que la IA las cree, o puedes añadirlas tú.</div>'; return; }
+  chars.sort((a,b) => (b.data.rol==="protagonista") - (a.data.rol==="protagonista") || a.name.localeCompare(b.name));
+  chars.forEach(c => {
+    const d = document.createElement("div"); d.className = "card";
+    d.innerHTML = '<b></b><span class="rol"></span><p></p>';
+    d.querySelector("b").textContent = c.name;
+    d.querySelector(".rol").textContent = c.data.rol || "";
+    d.querySelector("p").textContent = c.data.aspecto || c.data.personalidad || "";
+    d.onclick = () => editChar(c);
+    box.appendChild(d);
+  });
+}
+function editChar(c){
+  const f = $("#edit"); f.classList.remove("hidden");
+  f.innerHTML = '<label>Nombre</label><input name="__name" required>' +
+    FIELDS.map(([k,l]) => `<label>${l}</label><textarea name="${k}" style="min-height:${k==="historia"?120:60}px"></textarea>`).join("") +
+    '<div class="row"><button class="primary" type="submit">Guardar ficha</button><button type="button" id="cCancel">Cerrar</button>' +
+    (c.id ? '<button type="button" class="danger" id="cDel">Borrar</button>' : '') + '</div>';
+  f.elements.__name.value = c.name;
+  FIELDS.forEach(([k]) => f.elements[k].value = c.data[k] || "");
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const data = {}; FIELDS.forEach(([k]) => { if(f.elements[k].value.trim()) data[k] = f.elements[k].value.trim(); });
+    const name = f.elements.__name.value.trim();
+    if(c.id) await api("PUT", `/games/${gid}/characters/${c.id}`, {name, data});
+    else await api("POST", `/games/${gid}/characters`, {name, data});
+    chars = (await api("GET", "/games/"+gid)).characters; renderCards(); f.classList.add("hidden");
+  };
+  $("#cCancel").onclick = () => f.classList.add("hidden");
+  if(c.id) $("#cDel").onclick = async () => {
+    if(confirm(`¿Borrar la ficha de ${c.name}?`)){ await api("DELETE", `/games/${gid}/characters/${c.id}`); chars = chars.filter(x => x.id !== c.id); renderCards(); f.classList.add("hidden"); }
+  };
+  f.scrollIntoView({behavior:"smooth"});
+}
+$("#btnNewChar").onclick = () => editChar({id:null, name:"", data:{}});
+
+loadGames();
+</script>
+</body>
+</html>
