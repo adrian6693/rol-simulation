@@ -232,7 +232,11 @@ Como jugar:
 - Respeta estrictamente las fichas y la geografia: no mezcles caracteristicas entre personajes ni contradigas datos ya establecidos.
 - Los mensajes marcados como [DIRECTOR] son instrucciones del jugador sobre la historia o el mundo (cambiar algo, corregir un error, anadir un personaje o lugar). Aplicalas de inmediato y sin discutir, y continua la escena ya corregida.
 - Las notas marcadas como [NOTA DEL MOTOR] son ordenes internas: cumplelas sin mencionarlas ni nombrarlas.
-- Escribe en espanol, con prosa narrativa y dialogos. Extension media (2-5 parrafos). Termina dejando margen para que el jugador responda.
+ESTILO (muy importante):
+- Escribe como una novela, en espanol, en tercera persona, con prosa narrativa y dialogos. Extension media (2-5 parrafos).
+- Nunca te dirijas al jugador. No hagas preguntas del tipo "¿que haras ahora?", no le ofrezcas opciones ni caminos posibles, no le digas lo que "podria" hacer y no cierres con una pregunta. El narrador no habla con el jugador: solo cuenta lo que ocurre.
+- No uses lenguaje de juego (persuasion, tiradas, habilidades, turnos, opciones, "tu personaje"). Todo ocurre dentro del mundo.
+- Corta la escena en un momento natural, cuando la situacion espera una reaccion del protagonista (alguien le habla o le mira, una puerta se abre, algo cambia), y dejala ahi. Si hace falta una pregunta, que la haga un personaje dentro de un dialogo.
 
 MUNDO Y PROTAGONISTA (descrito por el jugador):
 {g['setup']}"""
@@ -249,6 +253,16 @@ MUNDO Y PROTAGONISTA (descrito por el jugador):
     if sheets:
         s += "\n\nFICHAS DE LOS PERSONAJES PRESENTES (datos oficiales):\n\n" + "\n\n".join(sheets)
     return s
+
+
+def strip_player_question(text):
+    """Quita el ultimo parrafo si es una pregunta del narrador al jugador (no un dialogo)."""
+    paras = text.rstrip().split("\n\n")
+    if len(paras) > 1:
+        last = paras[-1].strip()
+        if last.endswith(("?", "?*", "?_")) and not last.startswith(("—", "-", "–", '"', "«", "“", "'")):
+            return "\n\n".join(paras[:-1]).rstrip()
+    return text
 
 
 def event_note():
@@ -405,14 +419,14 @@ def turn(gid, kind, text, emit):
     msgs = [{"role": "system", "content": system_prompt(g, directives, sheets, plines, json.loads(g["threads"] or "[]"))}]
     for h in hist:
         if h["kind"] == "narrator":
-            msgs.append({"role": "assistant", "content": h["content"]})
+            msgs.append({"role": "assistant", "content": strip_player_question(h["content"])})
         elif h["kind"] == "director":
             msgs.append({"role": "user", "content": "[DIRECTOR] " + h["content"]})
         else:
             msgs.append({"role": "user", "content": h["content"]})
     if kind == "start":
         msgs.append({"role": "user", "content": "[DIRECTOR] Comienza la partida: presenta el mundo y la escena inicial en la que se encuentra el protagonista. "
-                     "La escena debe incluir ya un detonante, problema o gancho que invite a actuar."})
+                     "La escena debe incluir ya un detonante, problema o gancho que invite a actuar, contado como novela, sin preguntar nada al jugador."})
     if fire:
         msgs[-1]["content"] += event_note()
 
@@ -423,6 +437,10 @@ def turn(gid, kind, text, emit):
         if tok:
             reply += tok
             emit({"t": "token", "v": tok})
+    clean = strip_player_question(reply)
+    if clean != reply:
+        reply = clean
+        emit({"t": "replace", "v": reply})
     with db() as c:
         c.execute("INSERT INTO messages(game_id,kind,content,ts) VALUES(?,?,?,?)", (gid, "narrator", reply, time.time()))
 

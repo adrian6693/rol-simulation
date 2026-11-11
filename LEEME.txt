@@ -28,3 +28,5 @@ NOVEDADES (v2)
   editarlos o borrarlos. En modo Dirigir puedes pedirle cambios ("anade una ciudad al norte de X").
 - Si ya tenias partidas de la version anterior, siguen funcionando (la base de datos se actualiza sola).
 - Para ajustar la memoria del modelo: variable de entorno NUM_CTX (por defecto 8192).
+- Narracion natural: el narrador cuenta la historia como una novela en tercera persona, sin preguntarte
+  "que haras ahora" ni ofrecerte opciones. Si aun asi se le escapa una pregunta final, la app la elimina.

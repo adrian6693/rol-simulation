@@ -250,6 +250,7 @@ async function send(kind, text){
         const line = buf.slice(0, i).trim(); buf = buf.slice(i+1); if(!line) continue;
         const ev = JSON.parse(line);
         if(ev.t === "token"){ out.textContent += ev.v; scrollDown(); }
+        else if(ev.t === "replace") out.textContent = ev.v;
         else if(ev.t === "status") st.textContent = ev.v;
         else if(ev.t === "error") st.textContent = ev.v;
         else if(ev.t === "world"){
