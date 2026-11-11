@@ -74,6 +74,18 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
 .card.flash{border-color:var(--player)}
 #edit{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 18px 18px}
 .map-soon{padding:60px 20px;text-align:center;color:var(--muted)}
+
+/* mapa */
+#map{flex:1;overflow-y:auto;padding:20px 16px}
+#svg{width:100%;height:min(62vh,560px);background:var(--panel);border:1px solid var(--line);border-radius:8px;touch-action:none;display:block}
+#svg .pl{cursor:grab}
+.maphead{display:flex;gap:10px;align-items:center;margin-bottom:12px}
+.maphead span{color:var(--muted);font-size:13px;flex:1}
+#placeEdit{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 18px 18px;margin-top:14px}
+.threads{margin:22px 0 0;padding:0;list-style:none}
+.threads li{border-left:3px solid var(--director);padding:4px 0 4px 12px;margin-bottom:8px;font:16px/1.5 var(--narr)}
+.threads-t{font:600 18px var(--narr);margin:26px 0 8px}
+#freq{width:auto;padding:4px 8px;font-size:13px}
 </style>
 </head>
 <body>
@@ -94,6 +106,12 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
     <label for="gModel">Modelo de IA local</label>
     <select id="gModel"></select>
     <div id="modelErr" class="hidden" style="color:var(--danger);margin-top:8px"></div>
+    <label for="gFreq">¿Cuándo debe intervenir la IA si no pasa nada?</label>
+    <select id="gFreq">
+      <option value="1">Pronto: tras 1 turno sin nada que pase</option>
+      <option value="2" selected>Normal: tras 2 turnos sin nada que pase</option>
+      <option value="3">Con paciencia: tras 3 turnos sin nada que pase</option>
+    </select>
     <div class="row">
       <button class="primary" type="submit">Empezar partida</button>
       <button type="button" id="btnCancel">Cancelar</button>
@@ -107,7 +125,7 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
     <span class="title" id="gTitle"></span>
     <button class="tab on" data-tab="chat">Chat</button>
     <button class="tab" data-tab="sheets">Fichas</button>
-    <button class="tab" data-tab="map" disabled title="Próximamente">Mapa</button>
+    <button class="tab" data-tab="map">Mapa</button>
   </header>
   <main>
     <div id="chat" style="display:flex;flex-direction:column;flex:1;min-height:0">
@@ -117,6 +135,9 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
           <button class="mode on" data-m="player">Actuar</button>
           <button class="mode" data-m="director">Dirigir</button>
           <span class="hint" id="hint"></span>
+          <select id="freq" title="Cuándo interviene la IA si la historia está parada">
+            <option value="1">Interviene pronto</option><option value="2">Interviene normal</option><option value="3">Interviene con paciencia</option>
+          </select>
         </div>
         <textarea id="input"></textarea>
         <div class="row" style="margin-top:8px">
@@ -130,13 +151,20 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
       <div class="cards" id="cards"></div>
       <form id="edit" class="hidden"></form>
     </div></div>
+    <div id="map" class="hidden"><div class="wrap" style="max-width:900px">
+      <div class="maphead"><span>Arrastra los lugares para recolocarlos. Pídele a la IA en modo Dirigir que añada o cambie lugares y rutas.</span><button id="btnNewPlace">Nuevo lugar</button></div>
+      <svg id="svg" preserveAspectRatio="xMidYMid meet"></svg>
+      <form id="placeEdit" class="hidden"></form>
+      <div class="threads-t">Tramas abiertas</div>
+      <ul class="threads" id="threads"></ul>
+    </div></div>
   </main>
 </section>
 
 <script>
 const $ = s => document.querySelector(s);
 const FIELDS = [["rol","Rol"],["edad","Edad"],["aspecto","Aspecto"],["personalidad","Personalidad"],["historia","Historia"],["relaciones","Relaciones"],["estado","Estado actual"],["notas","Notas"]];
-let gid = null, chars = [], mode = "player", busy = false;
+let gid = null, chars = [], places = [], routes = [], gameInfo = {}, mode = "player", busy = false;
 
 async function api(method, path, body){
   const r = await fetch("/api" + path, {method, headers: {"Content-Type":"application/json"}, body: body ? JSON.stringify(body) : undefined});
@@ -172,7 +200,7 @@ $("#btnCancel").onclick = () => $("#newform").classList.add("hidden");
 $("#newform").onsubmit = async e => {
   e.preventDefault();
   if(!$("#gModel").value){ $("#modelErr").classList.remove("hidden"); return; }
-  const r = await api("POST", "/games", {name:$("#gName").value, setup:$("#gSetup").value, rules:$("#gRules").value, model:$("#gModel").value});
+  const r = await api("POST", "/games", {name:$("#gName").value, setup:$("#gSetup").value, rules:$("#gRules").value, model:$("#gModel").value, freq:+$("#gFreq").value});
   e.target.reset(); e.target.classList.add("hidden");
   await openGame(r.id, true);
 };
@@ -182,7 +210,7 @@ async function openGame(id, fresh){
   gid = id;
   const d = await api("GET", "/games/"+id);
   $("#gTitle").textContent = d.game.name;
-  chars = d.characters;
+  loadWorld(d);
   $("#logInner").innerHTML = "";
   d.messages.forEach(m => addMsg(m.kind, m.content));
   show("game"); setTab("chat"); setMode("player"); renderCards();
@@ -224,12 +252,15 @@ async function send(kind, text){
         if(ev.t === "token"){ out.textContent += ev.v; scrollDown(); }
         else if(ev.t === "status") st.textContent = ev.v;
         else if(ev.t === "error") st.textContent = ev.v;
-        else if(ev.t === "chars" && ev.v.length) st.textContent = "Fichas actualizadas: " + ev.v.join(", ");
-        else if(ev.t === "done" && !st.textContent.startsWith("Fichas")) st.remove();
+        else if(ev.t === "world"){
+          const bits = []; if(ev.chars.length) bits.push("fichas: " + ev.chars.join(", ")); if(ev.places.length) bits.push("mapa: " + ev.places.join(", "));
+          if(bits.length) st.textContent = "Actualizado → " + bits.join(" · ");
+        }
+        else if(ev.t === "done" && !st.textContent.startsWith("Actualizado")) st.remove();
       }
     }
   }catch(e){ st.textContent = "Se perdió la conexión con el servidor."; }
-  chars = (await api("GET", "/games/"+gid)).characters; renderCards();
+  await refreshWorld();
   busy = false; $("#btnSend").disabled = false; $("#input").focus();
 }
 function submit(){
@@ -249,6 +280,8 @@ function setTab(t){
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   $("#chat").style.display = t === "chat" ? "flex" : "none";
   $("#sheets").classList.toggle("hidden", t !== "sheets");
+  $("#map").classList.toggle("hidden", t !== "map");
+  if(t === "map"){ drawMap(true); renderThreads(); }
   if(t === "chat") scrollDown();
 }
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => !b.disabled && setTab(b.dataset.tab));
@@ -282,7 +315,7 @@ function editChar(c){
     const name = f.elements.__name.value.trim();
     if(c.id) await api("PUT", `/games/${gid}/characters/${c.id}`, {name, data});
     else await api("POST", `/games/${gid}/characters`, {name, data});
-    chars = (await api("GET", "/games/"+gid)).characters; renderCards(); f.classList.add("hidden");
+    await refreshWorld(); f.classList.add("hidden");
   };
   $("#cCancel").onclick = () => f.classList.add("hidden");
   if(c.id) $("#cDel").onclick = async () => {
@@ -291,6 +324,110 @@ function editChar(c){
   f.scrollIntoView({behavior:"smooth"});
 }
 $("#btnNewChar").onclick = () => editChar({id:null, name:"", data:{}});
+
+/* ---------- Mundo, mapa y tramas ---------- */
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const KINDS = ["capital","ciudad","pueblo","fortaleza","ruina","otro"];
+let view = null, drag = null, selPlace = null;
+
+function loadWorld(d){
+  chars = d.characters; places = d.places; routes = d.routes; gameInfo = d.game;
+  $("#freq").value = String(Math.min(d.game.freq || 2, 3));
+}
+async function refreshWorld(){
+  loadWorld(await api("GET", "/games/" + gid));
+  renderCards();
+  if(!$("#map").classList.contains("hidden")){ drawMap(true); renderThreads(); }
+}
+$("#freq").onchange = e => api("PUT", "/games/" + gid, {freq: +e.target.value});
+
+function computeView(){
+  if(!places.length) return {x:0, y:0, w:100, h:70};
+  const xs = places.map(p => p.x), ys = places.map(p => p.y);
+  const minx = Math.min(...xs) - 22, maxx = Math.max(...xs) + 22, miny = Math.min(...ys) - 18, maxy = Math.max(...ys) + 22;
+  const w = Math.max(maxx - minx, 90), h = Math.max(maxy - miny, 60), cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
+  return {x: cx - w/2, y: cy - h/2, w, h};
+}
+function shape(k){
+  switch(k){
+    case "capital": return '<path d="M0-4.4L4.4 0 0 4.4-4.4 0Z" fill="var(--director)" stroke="var(--ink)" stroke-width=".5"/>';
+    case "ciudad": return '<circle r="3" fill="var(--text)" stroke="var(--ink)" stroke-width=".6"/><circle r="1.2" fill="var(--ink)"/>';
+    case "pueblo": return '<circle r="1.8" fill="var(--muted)" stroke="var(--ink)" stroke-width=".5"/>';
+    case "fortaleza": return '<rect x="-2.6" y="-2.6" width="5.2" height="5.2" fill="var(--text)" stroke="var(--ink)" stroke-width=".5"/>';
+    case "ruina": return '<path d="M0-3L3 2.4H-3Z" fill="none" stroke="var(--muted)" stroke-width=".7"/>';
+    default: return '<circle r="1.4" fill="var(--muted)"/>';
+  }
+}
+function drawMap(fit){
+  const svg = $("#svg");
+  if(fit || !view) view = computeView();
+  svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+  const by = Object.fromEntries(places.map(p => [p.id, p]));
+  let h = `<defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M10 0H0V10" fill="none" stroke="var(--line)" stroke-width=".15"/></pattern></defs>
+    <rect x="${view.x - 500}" y="${view.y - 500}" width="${view.w + 1000}" height="${view.h + 1000}" fill="url(#grid)"/>`;
+  if(!places.length) h += `<text x="${view.x + view.w/2}" y="${view.y + view.h/2}" text-anchor="middle" font-size="3.6" fill="var(--muted)" font-family="Georgia,serif">El mapa se irá dibujando a medida que avance la historia.</text>`;
+  routes.forEach(r => { const a = by[r.a], b = by[r.b]; if(a && b) h += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#7d8a99" stroke-width=".5" stroke-dasharray="1.6 1.2"/>`; });
+  places.forEach(p => {
+    const here = gameInfo.location && gameInfo.location === p.name;
+    h += `<g class="pl" data-pid="${p.id}" transform="translate(${p.x} ${p.y})">
+      <circle r="6" fill="transparent"/>
+      ${here ? '<circle r="5.6" fill="none" stroke="var(--player)" stroke-width=".6"/>' : ''}
+      ${selPlace === p.id ? '<circle r="5" fill="none" stroke="var(--text)" stroke-width=".35" stroke-dasharray="1 1"/>' : ''}
+      ${shape(p.kind)}
+      <text y="8" text-anchor="middle" font-size="3.4" font-family="Georgia,serif" fill="var(--text)" stroke="var(--panel)" stroke-width="1" paint-order="stroke">${esc(p.name)}</text>
+      ${here ? '<text y="-7" text-anchor="middle" font-size="2.6" fill="var(--player)">estás aquí</text>' : ''}</g>`;
+  });
+  svg.innerHTML = h;
+}
+const svgPt = e => { const s = $("#svg"), q = s.createSVGPoint(); q.x = e.clientX; q.y = e.clientY; return q.matrixTransform(s.getScreenCTM().inverse()); };
+$("#svg").addEventListener("pointerdown", e => {
+  const g = e.target.closest("[data-pid]"); if(!g) return;
+  const pl = places.find(p => p.id === +g.dataset.pid), m = svgPt(e);
+  drag = {pl, dx: pl.x - m.x, dy: pl.y - m.y, moved: false};
+  $("#svg").setPointerCapture(e.pointerId);
+});
+$("#svg").addEventListener("pointermove", e => {
+  if(!drag) return;
+  const m = svgPt(e), nx = m.x + drag.dx, ny = m.y + drag.dy;
+  if(Math.hypot(nx - drag.pl.x, ny - drag.pl.y) > 0.4) drag.moved = true;
+  if(drag.moved){ drag.pl.x = nx; drag.pl.y = ny; drawMap(false); }
+});
+$("#svg").addEventListener("pointerup", async () => {
+  if(!drag) return; const d = drag; drag = null;
+  if(d.moved){ await api("PUT", `/games/${gid}/places/${d.pl.id}`, {x: d.pl.x, y: d.pl.y}); drawMap(true); }
+  else editPlace(d.pl);
+});
+
+function editPlace(p){
+  selPlace = p.id; drawMap(false);
+  const names = Object.fromEntries(places.map(q => [q.id, q.name]));
+  const links = routes.filter(r => r.a === p.id || r.b === p.id).map(r => names[r.a === p.id ? r.b : r.a]).filter(Boolean);
+  const f = $("#placeEdit"); f.classList.remove("hidden");
+  f.innerHTML = '<label>Nombre</label><input name="n" required><label>Tipo</label><select name="k">' +
+    KINDS.map(k => `<option value="${k}">${k}</option>`).join("") + '</select><label>Descripción</label><textarea name="d"></textarea>' +
+    `<div class="hint" style="text-align:left;margin-top:8px">${links.length ? "Conectado con: " + esc(links.join(", ")) : "Sin rutas registradas"}</div>` +
+    '<div class="row"><button class="primary" type="submit">Guardar lugar</button><button type="button" id="pClose">Cerrar</button><button type="button" class="danger" id="pDel">Borrar</button></div>';
+  f.elements.n.value = p.name; f.elements.k.value = p.kind; f.elements.d.value = p.desc;
+  f.onsubmit = async e => {
+    e.preventDefault();
+    await api("PUT", `/games/${gid}/places/${p.id}`, {name: f.elements.n.value, kind: f.elements.k.value, desc: f.elements.d.value});
+    selPlace = null; f.classList.add("hidden"); await refreshWorld();
+  };
+  $("#pClose").onclick = () => { selPlace = null; f.classList.add("hidden"); drawMap(false); };
+  $("#pDel").onclick = async () => {
+    if(confirm(`¿Borrar ${p.name} del mapa?`)){ await api("DELETE", `/games/${gid}/places/${p.id}`); selPlace = null; f.classList.add("hidden"); await refreshWorld(); }
+  };
+}
+$("#btnNewPlace").onclick = async () => {
+  const name = prompt("Nombre del nuevo lugar"); if(!name) return;
+  await api("POST", `/games/${gid}/places`, {name, kind: "pueblo", desc: ""}); await refreshWorld();
+};
+function renderThreads(){
+  const ul = $("#threads"); ul.innerHTML = "";
+  const t = gameInfo.threads || [];
+  if(!t.length){ ul.innerHTML = '<li style="border-color:var(--line);color:var(--muted)">Aún no hay tramas abiertas. Aparecerán según avance la historia.</li>'; return; }
+  t.forEach(x => { const li = document.createElement("li"); li.textContent = x; ul.appendChild(li); });
+}
 
 loadGames();
 </script>

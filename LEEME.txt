@@ -18,3 +18,13 @@ ARCHIVOS
 - server.py   servidor local (conexion con Ollama, base de datos, fichas)
 - index.html  interfaz del juego
 - iniciar.bat lanzador para Windows
+
+NOVEDADES (v2)
+- Acontecimientos solo cuando hacen falta: tras cada turno la IA valora si la historia esta estancada
+  (nada en marcha). Si lo esta durante 1, 2 o 3 turnos seguidos (lo eliges al crear la partida y puedes
+  cambiarlo en el chat), el motor le ordena introducir algo nuevo. Si ya hay algo ocurriendo, no interviene.
+- Tramas abiertas: la IA lleva la cuenta de los conflictos y misterios en curso y los hace avanzar.
+- Mapa: la IA registra ciudades, pueblos, fortalezas y rutas; puedes arrastrar los lugares para recolocarlos,
+  editarlos o borrarlos. En modo Dirigir puedes pedirle cambios ("anade una ciudad al norte de X").
+- Si ya tenias partidas de la version anterior, siguen funcionando (la base de datos se actualiza sola).
+- Para ajustar la memoria del modelo: variable de entorno NUM_CTX (por defecto 8192).
