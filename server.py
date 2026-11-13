@@ -4,7 +4,7 @@ Requisitos: Python 3.9+ y Ollama (https://ollama.com) en marcha. Sin dependencia
 Uso:  python server.py   ->  abre http://localhost:8000
 Variables opcionales: OLLAMA_URL, PORT, NUM_CTX (contexto del modelo, por defecto 8192)
 """
-import json, math, os, random, re, sqlite3, time, urllib.request
+import difflib, json, math, os, random, re, sqlite3, time, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -17,6 +17,9 @@ CAMPOS = ["rol", "edad", "aspecto", "personalidad", "historia", "relaciones", "e
 TIPOS_LUGAR = ["capital", "ciudad", "pueblo", "fortaleza", "ruina", "otro"]
 
 # Tipos de acontecimiento que el motor puede pedir al narrador (se eligen 3 al azar en cada empuje)
+# Muestreo del narrador. Penalizaciones de repeticion fuertes provocan palabras en otro idioma, asi que solo una leve y corta.
+NARRATOR_OPTS = {"temperature": float(os.environ.get("NARRATOR_TEMP", 0.7)), "top_p": 0.95, "repeat_penalty": 1.05, "repeat_last_n": 64}
+
 EVENTOS = [
     "una complicacion o imprevisto que dificulte lo que el jugador esta haciendo",
     "una oportunidad inesperada que el jugador puede aprovechar o ignorar",
@@ -49,7 +52,7 @@ def init():
         CREATE TABLE IF NOT EXISTS routes(game_id INTEGER, a INTEGER, b INTEGER, UNIQUE(game_id, a, b));
         """)
         for col, ddl in [("threads", "TEXT DEFAULT '[]'"), ("freq", "INTEGER DEFAULT 3"),
-                         ("since_event", "INTEGER DEFAULT 0"), ("location", "TEXT DEFAULT ''")]:
+                         ("since_event", "INTEGER DEFAULT 0"), ("location", "TEXT DEFAULT ''"), ("summary", "TEXT DEFAULT ''")]:
             try:
                 c.execute(f"ALTER TABLE games ADD COLUMN {col} {ddl}")
             except sqlite3.OperationalError:
@@ -66,8 +69,8 @@ def ollama(path, body=None, timeout=900):
     return urllib.request.urlopen(req, timeout=timeout)
 
 
-def chat(model, messages, stream=False, fmt=None):
-    body = {"model": model, "messages": messages, "stream": stream, "options": {"num_ctx": NUM_CTX}}
+def chat(model, messages, stream=False, fmt=None, opts=None):
+    body = {"model": model, "messages": messages, "stream": stream, "options": {"num_ctx": NUM_CTX, **(opts or {})}}
     if fmt:
         body["format"] = fmt
         body["options"]["temperature"] = 0.2
@@ -220,7 +223,7 @@ def apply_places(gid, lugares):
 
 
 # ---------- Prompts ----------
-def system_prompt(g, directives, sheets, places, threads):
+def system_prompt(g, directives, sheets, places, threads, prot=""):
     s = f"""Eres el NARRADOR y motor de simulacion de un juego de rol por texto. No hay dados ni azar mecanico: tu decides las consecuencias de forma coherente con el mundo, las reglas y las fichas de los personajes.
 
 Como jugar:
@@ -229,17 +232,25 @@ Como jugar:
 - El mundo esta vivo: los personajes tienen metas, personalidad y memoria propias y pueden actuar por iniciativa propia. Tu trabajo es SIMULAR, no solo reaccionar.
 - NO satures la historia de sucesos. Si ya hay algo en marcha (una conversacion, un conflicto, una busqueda, un viaje con sentido), deja que se desarrolle con calma y a su ritmo, sin anadir giros ni interrupciones.
 - Solo cuando la escena este parada (nada ocurre, nadie quiere nada, el jugador no tiene un rumbo claro) toma tu la iniciativa: haz que pase algo concreto en lugar de preguntar al jugador que quiere hacer.
+- El jugador manda sobre su propio personaje: lo que describe que hace o que puede hacer (segun la descripcion y las reglas de la partida) se cumple tal como lo escribe. Tu narras sus efectos y como reacciona el mundo, sin negarlo ni ignorarlo.
 - Respeta estrictamente las fichas y la geografia: no mezcles caracteristicas entre personajes ni contradigas datos ya establecidos.
 - Los mensajes marcados como [DIRECTOR] son instrucciones del jugador sobre la historia o el mundo (cambiar algo, corregir un error, anadir un personaje o lugar). Aplicalas de inmediato y sin discutir, y continua la escena ya corregida.
 - Las notas marcadas como [NOTA DEL MOTOR] son ordenes internas: cumplelas sin mencionarlas ni nombrarlas.
 ESTILO (muy importante):
 - Escribe como una novela, en espanol, en tercera persona, con prosa narrativa y dialogos. Extension media (2-5 parrafos).
 - Nunca te dirijas al jugador. No hagas preguntas del tipo "¿que haras ahora?", no le ofrezcas opciones ni caminos posibles, no le digas lo que "podria" hacer y no cierres con una pregunta. El narrador no habla con el jugador: solo cuenta lo que ocurre.
+- CONTINUIDAD: cada respuesta continua exactamente desde el ultimo instante de la anterior. Nunca repitas, resumas ni reformules lo ya narrado ni los dialogos ya dichos. Reacciona a lo que el protagonista acaba de hacer o decir y haz que los demas respondan con algo nuevo.
+- No cierres con valoraciones del ambiente ("la situacion parece cada vez mas tensa/peligrosa", "el ambiente se vuelve..."). Termina siempre con un hecho concreto o una frase de un personaje.
+- Escribe todo en espanol correcto. Nunca mezcles palabras en ingles.
 - No uses lenguaje de juego (persuasion, tiradas, habilidades, turnos, opciones, "tu personaje"). Todo ocurre dentro del mundo.
 - Corta la escena en un momento natural, cuando la situacion espera una reaccion del protagonista (alguien le habla o le mira, una puerta se abre, algo cambia), y dejala ahi. Si hace falta una pregunta, que la haga un personaje dentro de un dialogo.
 
 MUNDO Y PROTAGONISTA (descrito por el jugador):
 {g['setup']}"""
+    if prot:
+        s += f"\n\nEl protagonista (el personaje del jugador) se llama {prot}. Refierete a el siempre por su nombre, nunca como 'tu' ni con 'te/tu/ti'."
+    if g["summary"]:
+        s += f"\n\nRESUMEN DE LO OCURRIDO HASTA AHORA:\n{g['summary']}"
     if g["rules"].strip():
         s += f"\n\nREGLAS DE LA PARTIDA (impuestas por el jugador, obligatorias):\n{g['rules']}"
     if directives:
@@ -265,6 +276,34 @@ def strip_player_question(text):
     return text
 
 
+def _sentences(t):
+    out = []
+    for x in re.split(r"(?<=[.!?…:])\s+|\n+", t):
+        x = re.sub(r"[^\w\s]", "", x.lower()).strip()
+        if len(x) >= 10:
+            out.append(x)
+    return out
+
+
+def _grams(t, n=4):
+    w = re.sub(r"[^\w\s]", "", t.lower()).split()
+    return {" ".join(w[i:i + n]) for i in range(len(w) - n + 1)}
+
+
+def repetition_score(new, prevs):
+    """Cuanto de la respuesta nueva ya estaba en las anteriores (frases casi iguales o grupos de 4 palabras)."""
+    if isinstance(prevs, str):
+        prevs = [prevs]
+    ns = _sentences(new)
+    ps = [x for p in prevs for x in _sentences(p)]
+    if not ns or not ps:
+        return 0.0
+    rep_n = sum(1 for n in ns if any(n == p or difflib.SequenceMatcher(None, n, p).ratio() >= 0.75 for p in ps))
+    gn = _grams(new)
+    gp = set().union(*[_grams(p) for p in prevs]) if prevs else set()
+    return max(rep_n / len(ns), len(gn & gp) / len(gn) if gn else 0.0)
+
+
 def event_note():
     tipos = "; ".join(random.sample(EVENTOS, 3))
     return ("\n\n[NOTA DEL MOTOR - invisible para el jugador] La historia lleva unos turnos sin avanzar: no esta pasando nada. "
@@ -279,7 +318,8 @@ Responde SOLO con JSON con esta forma exacta:
  "lugares":[{"nombre":"...","tipo":"capital|ciudad|pueblo|fortaleza|ruina|otro","descripcion":"...","cerca_de":"nombre de un lugar ya existente","direccion":"norte|noreste|este|sureste|sur|suroeste|oeste|noroeste","distancia":"cerca|media|lejos","conexiones":["nombres de lugares unidos por camino o ruta"]}],
  "hilos":["..."],
  "ubicacion_protagonista":"nombre de un lugar o vacio",
- "escena_estancada":false}
+ "escena_estancada":false,
+ "resumen":"..."}
 
 PERSONAJES
 - El PROTAGONISTA (el personaje del jugador) siempre debe tener ficha, con "rol":"protagonista". Si aun no existe, crea la con la descripcion inicial.
@@ -296,6 +336,8 @@ HILOS Y UBICACION
 - "ubicacion_protagonista" = lugar del mapa donde esta ahora el protagonista, o "" si no esta en ninguno.
 ESTANCAMIENTO
 - "escena_estancada" = true SOLO si, tras la respuesta del narrador, no esta pasando nada relevante: sin conflicto, amenaza, objetivo o conversacion con rumbo, y las tramas abiertas no avanzan (rutina, charla vacia, tiempo muerto). Es false si hay cualquier cosa en marcha, aunque sea tranquila, o si acaba de ocurrir algo que el jugador debe digerir o resolver.
+RESUMEN
+- "resumen" = resumen actualizado de TODA la historia hasta ahora (maximo 120 palabras, en pasado): quien es quien, que ha pasado de importante y como estan los conflictos. Parte del RESUMEN ANTERIOR e incorpora lo nuevo; elimina detalles menores.
 GENERAL
 - No inventes datos que no se desprendan del texto, salvo el aspecto fisico de un personaje nuevo y la posicion relativa de lugares.
 - Si no hay nada que registrar en una seccion, deja su lista vacia. Escribe los valores en espanol."""
@@ -336,6 +378,9 @@ LUGARES YA EN EL MAPA:
 TRAMAS ABIERTAS ACTUALES:
 {json.dumps(threads, ensure_ascii=False)}
 
+RESUMEN ANTERIOR:
+{g['summary'] or '(aun no hay)'}
+
 ULTIMOS ACONTECIMIENTOS:
 {context_text}
 
@@ -372,6 +417,9 @@ RESPUESTA DEL NARRADOR:
         ub = find_place(load_places(gid), out.get("ubicacion_protagonista") or "")
         if ub:
             c.execute("UPDATE games SET location=? WHERE id=?", (ub["name"], gid))
+        resumen = out.get("resumen")
+        if isinstance(resumen, str) and len(resumen.strip()) > 20:
+            c.execute("UPDATE games SET summary=? WHERE id=?", (resumen.strip(), gid))
         quiet = out.get("escena_estancada") is True
         c.execute("UPDATE games SET since_event=? WHERE id=?", ((g["since_event"] or 0) + 1 if quiet else 0, gid))
     return touched, lugares
@@ -392,7 +440,7 @@ def turn(gid, kind, text, emit):
         if fire:
             c.execute("UPDATE games SET since_event=0 WHERE id=?", (gid,))
         hist = [dict(r) for r in c.execute(
-            "SELECT kind,content FROM messages WHERE game_id=? ORDER BY id DESC LIMIT 24", (gid,))][::-1]
+            "SELECT kind,content FROM messages WHERE game_id=? ORDER BY id DESC LIMIT 8", (gid,))][::-1]
         g = c.execute("SELECT * FROM games WHERE id=?", (gid,)).fetchone()
 
     chars = load_chars(gid)
@@ -416,7 +464,8 @@ def turn(gid, kind, text, emit):
     present += [c for c in mentioned(chars, recent) if c not in present]
     sheets = [sheet_text(c["name"], c["data"]) for c in present]
 
-    msgs = [{"role": "system", "content": system_prompt(g, directives, sheets, plines, json.loads(g["threads"] or "[]"))}]
+    prot = next((c["name"] for c in chars if c["data"].get("rol") == "protagonista"), "")
+    msgs = [{"role": "system", "content": system_prompt(g, directives, sheets, plines, json.loads(g["threads"] or "[]"), prot)}]
     for h in hist:
         if h["kind"] == "narrator":
             msgs.append({"role": "assistant", "content": strip_player_question(h["content"])})
@@ -427,16 +476,42 @@ def turn(gid, kind, text, emit):
     if kind == "start":
         msgs.append({"role": "user", "content": "[DIRECTOR] Comienza la partida: presenta el mundo y la escena inicial en la que se encuentra el protagonista. "
                      "La escena debe incluir ya un detonante, problema o gancho que invite a actuar, contado como novela, sin preguntar nada al jugador."})
+    narr = [h["content"] for h in hist if h["kind"] == "narrator"]
+    if kind in ("player", "director"):
+        used = []
+        for t in narr[-3:]:
+            ss = [x.strip() for x in re.split(r"(?<=[.!?…])\s+|\n+", t) if len(x.strip()) > 20]
+            if ss:
+                used.append(ss[-1])
+        msgs[-1]["content"] += ("\n\n[NOTA DEL MOTOR] Continua desde el ultimo instante narrado sin repetir ni resumir nada de lo anterior. "
+                                "Reacciona directamente a lo que acaba de hacer o decir el protagonista y haz que el mundo avance con hechos nuevos; "
+                                "los demas personajes responden con algo distinto a lo ya dicho. Narra en tercera persona y en espanol."
+                                + (" No uses estas frases finales ya usadas ni variantes: " + " | ".join(used) if used else ""))
     if fire:
         msgs[-1]["content"] += event_note()
 
-    reply = ""
-    for line in chat(g["model"], msgs, stream=True):
-        d = json.loads(line)
-        tok = d.get("message", {}).get("content", "")
-        if tok:
-            reply += tok
-            emit({"t": "token", "v": tok})
+    def generate(ms):
+        out = ""
+        for line in chat(g["model"], ms, stream=True, opts=NARRATOR_OPTS):
+            tok = json.loads(line).get("message", {}).get("content", "")
+            if tok:
+                out += tok
+                emit({"t": "token", "v": tok})
+        return out
+
+    reply = generate(msgs)
+    prev = narr[-2:]
+    if prev and repetition_score(reply, prev) >= 0.25:  # repite lo ya narrado: se reescribe una vez
+        emit({"t": "replace", "v": ""})
+        emit({"t": "status", "v": "La respuesta repetía lo anterior; reescribiendo…"})
+        retry = msgs[:-1] + [{"role": "user", "content": msgs[-1]["content"] +
+                              "\n\n[NOTA DEL MOTOR] Tu intento anterior repetia texto ya narrado. Escribe SOLO lo que ocurre a continuacion, "
+                              "con frases y dialogos nuevos que reaccionen a lo ultimo que hizo o dijo el protagonista."}]
+        second = generate(retry)
+        if repetition_score(second, prev) < repetition_score(reply, prev):
+            reply = second
+        else:
+            emit({"t": "replace", "v": reply})
     clean = strip_player_question(reply)
     if clean != reply:
         reply = clean
@@ -570,6 +645,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json({"ok": True})
         if m := re.fullmatch(r"/api/games/(\d+)", self.path):
             with db() as c:
+                if b.get("model"):
+                    c.execute("UPDATE games SET model=? WHERE id=?", (b["model"], int(m[1])))
                 if "freq" in b:
                     c.execute("UPDATE games SET freq=? WHERE id=?", (max(1, min(3, int(b["freq"]))), int(m[1])))
             return self.send_json({"ok": True})

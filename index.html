@@ -123,6 +123,7 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
   <header class="bar">
     <button id="btnBack">Menú</button>
     <span class="title" id="gTitle"></span>
+    <select id="gameModel" title="Modelo de IA de esta partida" style="width:auto;max-width:210px;padding:4px 8px;font-size:13px"></select>
     <button class="tab on" data-tab="chat">Chat</button>
     <button class="tab" data-tab="sheets">Fichas</button>
     <button class="tab" data-tab="map">Mapa</button>
@@ -210,7 +211,7 @@ async function openGame(id, fresh){
   gid = id;
   const d = await api("GET", "/games/"+id);
   $("#gTitle").textContent = d.game.name;
-  loadWorld(d);
+  loadWorld(d); fillModels(d.game.model);
   $("#logInner").innerHTML = "";
   d.messages.forEach(m => addMsg(m.kind, m.content));
   show("game"); setTab("chat"); setMode("player"); renderCards();
@@ -428,6 +429,13 @@ function renderThreads(){
   const t = gameInfo.threads || [];
   if(!t.length){ ul.innerHTML = '<li style="border-color:var(--line);color:var(--muted)">Aún no hay tramas abiertas. Aparecerán según avance la historia.</li>'; return; }
   t.forEach(x => { const li = document.createElement("li"); li.textContent = x; ul.appendChild(li); });
+}
+
+async function fillModels(cur){
+  const sel = $("#gameModel"), r = await api("GET", "/models");
+  const list = [...new Set([cur, ...(r.models || [])])];
+  sel.innerHTML = ""; list.forEach(m => sel.add(new Option(m, m))); sel.value = cur;
+  sel.onchange = () => api("PUT", "/games/" + gid, {model: sel.value});
 }
 
 loadGames();

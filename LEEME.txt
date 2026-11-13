@@ -30,3 +30,12 @@ NOVEDADES (v2)
 - Para ajustar la memoria del modelo: variable de entorno NUM_CTX (por defecto 8192).
 - Narracion natural: el narrador cuenta la historia como una novela en tercera persona, sin preguntarte
   "que haras ahora" ni ofrecerte opciones. Si aun asi se le escapa una pregunta final, la app la elimina.
+- Anti-repeticion: el narrador recibe la orden de continuar desde el ultimo instante sin repetir, se usan
+  ajustes de muestreo que penalizan repeticiones y, si aun asi repite lo anterior, la app reescribe la
+  respuesta automaticamente una vez.
+- v2.5: se quita la penalizacion fuerte de repeticion (provocaba palabras en ingles); el narrador solo ve
+  los ultimos 8 mensajes y recibe un resumen actualizado de toda la historia; la deteccion de repeticion
+  compara con las 2 respuestas anteriores; se evitan las frases finales ya usadas; el protagonista se
+  nombra por su nombre y sus acciones sobre su propio personaje se cumplen.
+- v2.6: temperatura del narrador 0.7 (mistral-nemo recomienda valores bajos; configurable con la variable
+  NARRATOR_TEMP) y selector de modelo en la cabecera de la partida para cambiar de modelo sin crear otra.
